@@ -1,0 +1,289 @@
+//
+//  ViewController.swift
+//  Audiority
+//  Copyright © 2021 Julia Huang. All rights reserved.
+
+import UIKit
+import AVKit
+import SoundAnalysis
+
+class ViewController: UIViewController, UITextViewDelegate {
+    
+    private let audioEngine = AVAudioEngine()
+    private var soundClassifier = MySoundClassifier2_1()
+    var streamAnalyzer: SNAudioStreamAnalyzer!
+    let queue = DispatchQueue(label: "com.sounds.alerts")
+    let checked_image = UIImage(named: "icons8-checked-checkbox-16")
+    let unchecked_image = UIImage(named: "icons8-unchecked-checkbox-16")
+    var listen_car_horn = true
+    var listen_gun_shot = true
+    var listen_siren = true
+    var start_listen = false
+    var check_history = false
+    var history = [(label: String, occurance: String)]()
+    var results = [(label: String, confidence: Float)]() {
+        didSet {
+            DispatchQueue.main.async { [weak self] in
+                self?.tableView.reloadData()
+            }
+        }
+    }
+    
+    @IBOutlet weak var historyTextView: UITextView!
+    @IBOutlet weak var tableView: UITableView!
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.title = "Audiority"
+        historyTextView.isScrollEnabled = true
+        historyTextView.isUserInteractionEnabled = true
+        historyTextView.frame = CGRect(x: 120, y: 400, width: 240, height: 170)
+        historyTextView.delegate = self
+    }
+    
+    private func startAudioEngine() {
+        audioEngine.prepare()
+        do {
+            try audioEngine.start()
+        } catch {
+            displayError()
+        }
+    }
+    
+    private func prepareForDetection() {
+        do{
+            try AVAudioSession.sharedInstance().setCategory(.playAndRecord)
+        }catch{
+            displayError()
+        }
+        let inputNode = audioEngine.inputNode
+        inputNode.removeTap(onBus: 0)
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        streamAnalyzer = SNAudioStreamAnalyzer(format: recordingFormat)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) {
+            [unowned self] (buffer, when) in
+            self.queue.async {
+                self.streamAnalyzer.analyze(buffer,
+                                            atAudioFramePosition: when.sampleTime)
+            }
+        }
+        startAudioEngine()
+    }
+    
+    private func createClassificationRequest() {
+        do {
+            let request = try SNClassifySoundRequest(mlModel: soundClassifier.model)
+            try streamAnalyzer.add(request, withObserver: self)
+        } catch {
+            fatalError("error adding the classification request")
+        }
+    }
+    
+    @IBAction func startRecordingButtonTapped(_ sender: UIButton) {
+        
+        if(!start_listen){
+            sender.setTitle("stop", for: .normal)
+            prepareForDetection()
+            createClassificationRequest()
+            start_listen = true
+            
+        }else{
+            sender.setTitle("start", for: .normal)
+            stopListening()
+            start_listen = false
+            
+        }
+       
+    }
+    
+    private func stopListening(){
+       self.audioEngine.stop()
+       streamAnalyzer.removeAllRequests()
+       results.removeAll()
+        
+    }
+    
+   
+    
+ 
+    
+   
+    @IBAction func gun_shot_tapped(_ sender: UIButton) {
+        
+        if(sender.tag == 1){
+            sender.setImage(unchecked_image, for: .normal)
+            sender.tag = 0
+            listen_gun_shot =  false
+         
+        }
+        else{
+            sender.setImage(checked_image, for: .normal)
+            sender.tag = 1
+            listen_gun_shot = true
+       
+        }
+        
+    }
+    
+    @IBAction func siren_tapped(_ sender: UIButton) {
+        if(sender.tag == 1){
+            sender.setImage(unchecked_image, for: .normal)
+            sender.tag = 0
+            listen_siren = false
+        
+        }
+        else{
+            sender.setImage(checked_image, for: .normal)
+            sender.tag = 1
+            listen_siren = true
+       
+        }
+        
+    }
+    
+    
+    @IBAction func settings_button_tapped(_ sender: UIButton) {
+        if(sender.titleLabel!.text == "Save")
+        {
+            sender.setTitle("Saved", for: .normal)
+            
+        }
+        else {
+            sender.setTitle("Save", for: .normal)
+            
+        }
+    }
+    
+    func saveData(){
+        UserDefaults.standard.set(self.history, forKey: "history")
+    }
+    
+    func getData(){
+     //   history = UserDefaults.standard.object(forKey: "history")
+    }
+    
+    @IBAction func car_horn_tapped(_ sender: UIButton) {
+      
+        if(sender.tag == 1){
+            sender.setImage(unchecked_image, for: .normal)
+            sender.tag = 0
+            listen_car_horn = false
+         
+        }
+        else{
+            sender.setImage(checked_image, for: .normal)
+            sender.tag = 1
+            listen_car_horn = true
+        
+        }
+    }
+    
+    @IBAction func history_button_tapped(_ sender: UIButton) {
+        
+        self.historyTextView.resignFirstResponder()
+        if(!check_history){
+            sender.setTitle("clear history", for: .normal)
+            var text = ""
+            for item in history{
+                text.append( "\(item.label): \(item.occurance)\n")
+            }
+            check_history = true
+            historyTextView.text = text
+       
+        }
+        else {
+            sender.setTitle("check history", for: .normal)
+            check_history = false
+            historyTextView.text = ""
+            history.removeAll()
+        }
+        
+    }
+    
+    func textViewDidChange(_ textView: UITextView) { //Handle the text changes here
+            print(textView.text); //the textView parameter is the textView where text was changed
+        }
+}
+
+extension ViewController: UITableViewDataSource {
+    
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return results.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        tableView.rowHeight = 80
+        var cell = tableView.dequeueReusableCell(withIdentifier: "ResultCell")
+        if cell == nil {
+            cell = UITableViewCell(style: .default, reuseIdentifier: "ResultCell")
+            cell?.backgroundColor = .clear
+        }
+        
+        let result = results[indexPath.row]
+        let label = convert(id: result.label)
+        //let label = result.label
+        //cell!.textLabel!.text = "\(label): \(result.confidence)"
+        cell!.textLabel!.text = "\(label)"
+        cell!.imageView?.image = UIImage(named: result.label)
+        //cell!.backgroundColor = UIColor(red: 0.71, green: 0.88, blue: 1.00, alpha: 1.00)
+        cell!.layer.backgroundColor = UIColor.clear.cgColor
+        
+        return cell!
+    }
+    
+    private func convert(id: String) -> String {
+        let mapping = ["dog_bark" : "dog bark", "engine_idling" : "engine idling", "gun_shot" : "gunshot", "siren" : "siren", "background": "listening", "car_horn": "car horn"]
+        return mapping[id] ?? id
+    }
+    
+}
+
+extension ViewController: SNResultsObserving {
+    func request(_ request: SNRequest, didProduce result: SNResult) {
+        guard let result = result as? SNClassificationResult else { return }
+        var temp = [(label: String, confidence: Float)]()
+        let sorted = result.classifications.sorted { (first, second) -> Bool in
+            return first.confidence > second.confidence
+        }
+        let today = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm, MMM d y"
+        let timeString = formatter.string(from: today)
+        //Text("Leading text \(String(describing: value))")
+        for classification in sorted {
+            let confidence = classification.confidence * 100
+            if confidence > 5 {
+                if(classification.identifier == "car_horn" && listen_car_horn || classification.identifier == "gun_shot" && listen_gun_shot || classification.identifier == "siren" && listen_siren || classification.identifier == "background") {
+                   temp.append((label: classification.identifier, confidence: Float(confidence)))
+                   if(classification.identifier != "background"){
+                       history.append((label: classification.identifier, occurance: timeString))
+                   }
+                }
+            }
+        }
+       
+        results = temp
+        
+    }
+        
+
+}
+
+extension ViewController {
+    
+    func dislayAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title,
+                                      message: message,
+                                      preferredStyle: .alert)
+        let action = UIAlertAction(title: "OK", style: .default, handler: nil)
+        alert.addAction(action)
+        self.present(alert, animated: true, completion: nil)
+    }
+    
+    func dislayError() {
+        let errorTitle = "Error"
+        let errorMessage = "Detection is not available right now."
+        self.showAlert(title: errorTitle, message: errorMessage)
+    }
+    
+}
